@@ -57,19 +57,23 @@ def load_population(path: str) -> pd.DataFrame:
 def load_hpi(path: str) -> pd.DataFrame:
     df = pd.read_csv(path)
 
-    # Filter to WA state-level, and purchase-only HPI rows
-    df = df[df['level'] == 'State']
-    df = df[df['place_name'] == 'Washington']
+    # Filter to WA county-level, and purchase-only HPI rows
+    df = df[df['level'] == 'County']
+    df = df[df['place_name'].str.contains('WA')]  # Assuming place_name includes state
     df = df[df['hpi_flavor'] == 'purchase-only']
 
     df = df[['place_name', 'yr', 'index_nsa']]
-    df = df.rename(columns={'yr': 'Year', 'place_name': 'State'})
+    df = df.rename(columns={'yr': 'Year', 'place_name': 'COUNTY'})
+    # Clean COUNTY to match
+    df['COUNTY'] = df['COUNTY'].str.replace(' County, WA', '').str.strip()
     return df
 
 
 def merge_datasets(housing: pd.DataFrame,
-                   population: pd.DataFrame) -> pd.DataFrame:
+                   population: pd.DataFrame,
+                   hpi: pd.DataFrame) -> pd.DataFrame:
     merged = housing.merge(population, on=['COUNTY', 'Year'])
+    merged = merged.merge(hpi, on=['COUNTY', 'Year'])
     return merged
 
 
@@ -132,7 +136,7 @@ def main() -> None:
     print(hpi.head(3))
 
     print()
-    merged = merge_datasets(housing, population)
+    merged = merge_datasets(housing, population, hpi)
     merged = compute_derived_columns(merged)
     print('=== MERGED WITH DERIVED COLUMNS ===')
     print(merged.shape)
