@@ -7,85 +7,113 @@ import pandas as pd
 
 
 def load_housing_units(path: str) -> pd.DataFrame:
-    """Load and clean WA housing units dataset."""
-    df = pd.read_csv(path)
-    county_only = df[df['FILTER'] == 1]
-    hu_cols = [c for c in county_only.columns if c[:3] == 'HU_']
-    all_rows = []
+    # thousands=',' tells pandas to read "12,345" as 12345 automatically
+    df = pd.read_csv(path, thousands=',')
+
+    # Keep only county-level rows
+    df = df[df['FILTER'] == 1]
+
+    # Find all columns that hold housing unit counts (they start with HU_)
+    hu_cols = []
+    for col in df.columns:
+        if col.startswith('HU_'):
+            hu_cols.append(col)
+
+    # Build a new table: one row per county per year
+    rows = []
     for col in hu_cols:
-        year = int(col[3:])
-        for idx in county_only.index:
-            all_rows.append({
-                'COUNTY': county_only.loc[idx, 'COUNTY'].strip(),
-                'Year': year,
-                'Housing_Units': int(str(
-                    county_only.loc[idx, col]).replace(',', ''))
-            })
-    return pd.DataFrame(all_rows)
+        year = int(col[3:])  # "HU_2015" → 2015
+        for i in df.index:
+            county_name = df.loc[i, 'COUNTY'].strip()
+            units = int(df.loc[i, col])
+            rows.append({'COUNTY': county_name, 'Year': year, 'Housing_Units': units})
+
+    return pd.DataFrame(rows)
 
 
 def load_population(path: str) -> pd.DataFrame:
-    """Load and clean WA population dataset."""
-    df = pd.read_csv(path)
-    county_only = df[df['FILTER'] == 1]
-    pop_cols = [c for c in county_only.columns if c[:4] == 'POP_']
-    all_rows = []
+    df = pd.read_csv(path, thousands=',')
+
+    # Keep only county-level rows
+    df = df[df['FILTER'] == 1]
+
+    # Find all columns that hold population counts (they start with POP_)
+    pop_cols = []
+    for col in df.columns:
+        if col.startswith('POP_'):
+            pop_cols.append(col)
+
+    rows = []
     for col in pop_cols:
-        year = int(col[4:])
-        for idx in county_only.index:
-            all_rows.append({
-                'COUNTY': county_only.loc[idx, 'COUNTY'].strip(),
-                'Year': year,
-                'Population': int(str(
-                    county_only.loc[idx, col]).replace(',', ''))
-            })
-    return pd.DataFrame(all_rows)
+        year = int(col[4:])  # "POP_2015" → 2015
+        for i in df.index:
+            county_name = df.loc[i, 'COUNTY'].strip()
+            pop = int(df.loc[i, col])
+            rows.append({'COUNTY': county_name, 'Year': year, 'Population': pop})
+
+    return pd.DataFrame(rows)
 
 
 def load_hpi(path: str) -> pd.DataFrame:
-    """Load Washington State-level HPI (purchase-only) from hpi_master.csv.
-
-    Note: hpi_master.csv does not contain county-level WA rows.
-    County HPI is distributed separately as hpi_at_county.xlsx.
-    State-level is used as a proxy for EDA purposes.
-    """
     df = pd.read_csv(path)
-    is_state = df['level'] == 'State'
-    is_wa = df['place_name'] == 'Washington'
-    is_purchase = df['hpi_flavor'] == 'purchase-only'
-    df = df[is_state & is_wa & is_purchase].copy()
+
+    # Filter to WA county-level, and purchase-only HPI rows
+    df = df[df['level'] == 'County']
+    df = df[df['place_name'].str.contains('WA')]  # Assuming place_name includes state
+    df = df[df['hpi_flavor'] == 'purchase-only']
+
     df = df[['place_name', 'yr', 'index_nsa']]
-    df = df.rename(columns={'yr': 'Year', 'place_name': 'State'})
+    df = df.rename(columns={'yr': 'Year', 'place_name': 'COUNTY'})
+    # Clean COUNTY to match
+    df['COUNTY'] = df['COUNTY'].str.replace(' County, WA', '').str.strip()
     return df
 
 
 def merge_datasets(housing: pd.DataFrame,
-                   population: pd.DataFrame) -> pd.DataFrame:
-    """Merge housing and population datasets on COUNTY and Year."""
+                   population: pd.DataFrame,
+                   hpi: pd.DataFrame) -> pd.DataFrame:
     merged = housing.merge(population, on=['COUNTY', 'Year'])
+    merged = merged.merge(hpi, on=['COUNTY', 'Year'])
     return merged
 
 
-def add_pop_growth(county_data: pd.DataFrame) -> pd.DataFrame:
-    """Compute year-over-year population growth % for one county."""
-    county_data = county_data.sort_values('Year').copy()
-    growth = [None]
-    for i in range(1, len(county_data)):
-        prev = county_data['Population'].iloc[i - 1]
-        curr = county_data['Population'].iloc[i]
-        growth.append((curr - prev) / prev * 100)
-    county_data['Pop_Growth'] = growth
-    return county_data
+def add_pop_growth(county_df: pd.DataFrame) -> pd.DataFrame:
+    # Sort by year so we go in order
+    sorted_indices = sorted(county_df.index, key=lambda i: county_df.loc[i, 'Year'])
+    county_df = county_df.loc[sorted_indices].reset_index(drop=True)
+
+    growth = []
+    for i in range(len(county_df)):
+        if i == 0:
+            # No previous year to compare to
+            growth.append(None)
+        else:
+            prev = county_df.loc[i - 1, 'Population']
+            curr = county_df.loc[i, 'Population']
+            pct_change = (curr - prev) / prev * 100
+            growth.append(pct_change)
+
+    county_df['Pop_Growth'] = growth
+    return county_df
 
 
 def compute_derived_columns(merged: pd.DataFrame) -> pd.DataFrame:
-    """Add Units_Per_Capita and Pop_Growth columns to merged dataset."""
-    merged['Units_Per_Capita'] = (merged['Housing_Units'] /
-                                  merged['Population'])
-    merged = merged.sort_values(['COUNTY', 'Year'])
-    return (merged.groupby('COUNTY')
-            .apply(add_pop_growth)
-            .reset_index(drop=True))
+    # Housing units per person
+    merged['Units_Per_Capita'] = merged['Housing_Units'] / merged['Population']
+
+    sorted_indices = sorted(merged.index, key=lambda i: (merged.loc[i, 'COUNTY'], merged.loc[i, 'Year']))
+    merged = merged.loc[sorted_indices].reset_index(drop=True)
+
+    # Go through each county, compute its pop growth, collect all the rows
+    all_rows = []
+    for county in merged['COUNTY'].unique():
+        county_rows = merged[merged['COUNTY'] == county].copy()
+        county_rows = add_pop_growth(county_rows)
+        for i in county_rows.index:
+            all_rows.append(county_rows.loc[i].to_dict())
+
+    # Build one big DataFrame from all the collected rows
+    return pd.DataFrame(all_rows).reset_index(drop=True)
 
 
 def main() -> None:
@@ -108,7 +136,7 @@ def main() -> None:
     print(hpi.head(3))
 
     print()
-    merged = merge_datasets(housing, population)
+    merged = merge_datasets(housing, population, hpi)
     merged = compute_derived_columns(merged)
     print('=== MERGED WITH DERIVED COLUMNS ===')
     print(merged.shape)
