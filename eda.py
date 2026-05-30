@@ -7,6 +7,7 @@ folder.
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+import statsmodels.formula.api as smf
 
 
 def load_data() -> pd.DataFrame:
@@ -28,7 +29,7 @@ def summary_statistics(df: pd.DataFrame) -> None:
     print(df.isnull().sum())
 
 
-def plot_hpi_trend(df: pd.DataFrame) -> None:
+def plot_population_trend(df: pd.DataFrame) -> None:
     """Plot Population trend over time by county."""
     plt.figure(figsize=(12, 8))
     sns.lineplot(data=df, x='Year', y='Population', hue='COUNTY', style='COUNTY')
@@ -41,7 +42,7 @@ def plot_hpi_trend(df: pd.DataFrame) -> None:
     plt.show()
 
 
-def plot_population_vs_hpi(df: pd.DataFrame) -> None:
+def plot_population_vs_units(df: pd.DataFrame) -> None:
     """Scatter plot of Population vs Housing Units."""
     plt.figure(figsize=(10, 6))
     sns.scatterplot(data=df, x='Population', y='Housing_Units', hue='COUNTY')
@@ -54,7 +55,7 @@ def plot_population_vs_hpi(df: pd.DataFrame) -> None:
     plt.show()
 
 
-def plot_recent_hpi_by_county(df: pd.DataFrame) -> None:
+def plot_recent_population_by_county(df: pd.DataFrame) -> None:
     """Bar chart of most recent population by county, sorted high to low."""
     recent_df = df.sort_values('Year').groupby('COUNTY').tail(1).sort_values('Population', ascending=False)
     plt.figure(figsize=(12, 8))
@@ -68,7 +69,7 @@ def plot_recent_hpi_by_county(df: pd.DataFrame) -> None:
     plt.show()
 
 
-def plot_units_vs_hpi_regression(df: pd.DataFrame) -> None:
+def plot_units_vs_growth_regression(df: pd.DataFrame) -> None:
     """Scatter plot with regression line of Units per Capita vs Population Growth."""
     df_clean = df.dropna(subset=['Pop_Growth'])
     plt.figure(figsize=(10, 6))
@@ -80,15 +81,37 @@ def plot_units_vs_hpi_regression(df: pd.DataFrame) -> None:
     plt.savefig('plot4_units_vs_popgrowth_regression.png')
     plt.show()
 
+def run_result_validity(df) -> None:
+    '''
+    Runs a OLS linear regression to validate the realtionship
+    between housing units per capita and population growth
+    '''
+    print("Running Result Validity Challenge...")
+
+    # Drop rows where Pop_Growth is NaN
+    clean_df = df.dropna(subset=['Units_Per_Capita', 'Pop_Growth'])
+    
+    # Fit the OLS model: Pop_Growth (Y) vs Units_Per_Capita (X)
+    model = smf.ols(formula='Pop_Growth ~ Units_Per_Capita', data=clean_df).fit()
+    
+    # Print the full summary table to the terminal
+    print("\n=== OLS Regression Results ===")
+    print(model.summary())
+    
+    # Extract and print just the p-value
+    p_value = model.pvalues['Units_Per_Capita']
+    print(f"\nExact P-Value for Units_Per_Capita: {p_value}")       
 
 def main() -> None:
     df = load_data()
     sns.set_style("whitegrid")
     summary_statistics(df)
-    plot_hpi_trend(df)
-    plot_population_vs_hpi(df)
-    plot_recent_hpi_by_county(df)
-    plot_units_vs_hpi_regression(df)
+    plot_population_trend(df)
+    plot_population_vs_units(df)
+    plot_recent_population_by_county(df)
+    plot_units_vs_growth_regression(df)
+
+    run_result_validity(df)
 
 
 if __name__ == '__main__':
