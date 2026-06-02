@@ -8,6 +8,7 @@ import pandas as pd
 from data_utils import (
     load_housing_units,
     load_population,
+    load_hpi,
     merge_datasets,
     compute_derived_columns,
 )
@@ -51,15 +52,42 @@ SEQUENCE,FILTER,COUNTY,JURISDICTION,POP_2020,POP_2021,POP_2022
 
 
 @pytest.fixture
-def loaded(housing_csv, population_csv):
+def hpi_csv(tmp_path):
+    '''
+    create test csv to test hpi
+    '''
+    path = tmp_path / "hpi.csv"
+    path.write_text("""\
+hpi_type,hpi_flavor,frequency,level,place_name,place_id,yr,period,index_nsa,index_sa
+traditional,purchase-only,annual,County,"Alpha County, WA",WA001,2020,1,150.0,151.0
+traditional,purchase-only,annual,County,"Alpha County, WA",WA001,2021,1,160.0,161.0
+traditional,purchase-only,annual,County,"Alpha County, WA",WA001,2022,1,170.0,171.0
+traditional,purchase-only,annual,County,"Beta County, WA",WA002,2020,1,200.0,201.0
+traditional,purchase-only,annual,County,"Beta County, WA",WA002,2021,1,210.0,211.0
+traditional,purchase-only,annual,County,"Beta County, WA",WA002,2022,1,220.0,221.0
+traditional,purchase-only,annual,County,"Gamma County, WA",WA003,2020,1,100.0,100.5
+traditional,purchase-only,annual,County,"Gamma County, WA",WA003,2021,1,105.0,105.5
+traditional,purchase-only,annual,County,"Gamma County, WA",WA003,2022,1,110.0,110.5
+traditional,all-transactions,annual,County,"Alpha County, WA",WA001,2020,1,145.0,146.0
+traditional,purchase-only,annual,MSA,"Seattle-Tacoma, WA",MSA001,2020,1,300.0,301.0
+""")
+    return path
+
+
+# Convenience fixture that loads all three into DataFrames
+@pytest.fixture
+def loaded(housing_csv, population_csv, hpi_csv):
     return (
         load_housing_units(housing_csv),
         load_population(population_csv),
+        load_hpi(hpi_csv),
     )
+
 
 '''
 testing housing function with assert stemeents
 '''
+
 
 def test_load_housing_units_shape(housing_csv):
     df = load_housing_units(housing_csv)
@@ -138,19 +166,63 @@ def test_load_population_strips_county_name(population_csv):
 
 
 '''
+testing hpi function with assert stemeents
+'''
+
+
+def test_load_hpi_shape(hpi_csv):
+    df = load_hpi(hpi_csv)
+    assert df.shape == (9, 3)  # 3 counties x 3 years, purchase-only county rows only
+
+
+def test_load_hpi_columns(hpi_csv):
+    df = load_hpi(hpi_csv)
+    assert set(df.columns) == {"COUNTY", "Year", "index_nsa"}
+
+
+def test_load_hpi_excludes_non_purchase_only(hpi_csv):
+    # all-transactions row means Alpha 2020 would appear twice if not filtered
+    df = load_hpi(hpi_csv)
+    alpha_2020_rows = df[
+        (df["COUNTY"] == "Alpha") & (df["Year"] == 2020)
+    ]
+    assert len(alpha_2020_rows) == 1
+
+
+def test_load_hpi_excludes_non_county_level(hpi_csv):
+    df = load_hpi(hpi_csv)
+    assert "Seattle-Tacoma" not in df["COUNTY"].values
+
+
+def test_load_hpi_strips_county_wa_suffix(hpi_csv):
+    # "Alpha County, WA" -> "Alpha"
+    df = load_hpi(hpi_csv)
+    assert "Alpha" in df["COUNTY"].values
+    assert not any("County" in str(v) for v in df["COUNTY"].values)
+
+
+def test_load_hpi_correct_index_value(hpi_csv):
+    df = load_hpi(hpi_csv)
+    val = df[
+        (df["COUNTY"] == "Beta") & (df["Year"] == 2021)
+    ]["index_nsa"].iloc[0]
+    assert val == 210.0
+
+
+'''
 testing merge function with assert stemeents
 '''
 
 
 def test_merge_shape(loaded):
     merged = merge_datasets(*loaded)
-    assert merged.shape == (9, 4)  # 3 counties x 3 years, 4 columns
+    assert merged.shape == (9, 5)  # 3 counties x 3 years, 5 columns
 
 
 def test_merge_columns(loaded):
     merged = merge_datasets(*loaded)
     assert set(merged.columns) == {
-        "COUNTY", "Year", "Housing_Units", "Population"
+        "COUNTY", "Year", "Housing_Units", "Population", "index_nsa"
     }
 
 
@@ -162,7 +234,7 @@ def test_merge_no_nulls(loaded):
 
 def test_merge_drops_unmatched_counties(loaded):
     # A county in housing/population but absent from HPI should be dropped
-    housing, population = loaded
+    housing, population, hpi = loaded
     housing = pd.concat([
         housing,
         pd.DataFrame([{"COUNTY": "NoHPI", "Year": 2020, "Housing_Units": 999}])
@@ -171,7 +243,7 @@ def test_merge_drops_unmatched_counties(loaded):
         population,
         pd.DataFrame([{"COUNTY": "NoHPI", "Year": 2020, "Population": 9999}])
     ])
-    merged = merge_datasets(housing, population)
+    merged = merge_datasets(housing, population, hpi)
     assert "NoHPI" not in merged["COUNTY"].values
 
 
@@ -183,6 +255,7 @@ def test_merge_correct_values(loaded):
     ].iloc[0]
     assert row["Housing_Units"] == 1200
     assert row["Population"] == 11_000
+    assert row["index_nsa"] == 170.0
 
 
 '''
@@ -197,6 +270,7 @@ def merged_df():
         "Year": [2020, 2021, 2022, 2020, 2021, 2022],
         "Housing_Units": [1000, 1100, 1200, 2000, 2050, 2100],
         "Population": [10000, 10500, 11000, 20000, 20200, 20400],
+        "index_nsa": [150.0, 160.0, 170.0, 200.0, 210.0, 220.0],
     })
 
 
@@ -256,5 +330,3 @@ def test_compute_derived_growth_not_cross_contaminated(merged_df):
     ].iloc[0]
     assert pd.isna(alpha_2020["Pop_Growth"])
     assert abs(beta_2021["Pop_Growth"] - 1.0) < 1e-9
-
-
