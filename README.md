@@ -71,17 +71,11 @@ data/
 The data pipeline module. Contains all functions for loading, cleaning, reshaping, merging,
 and computing derived columns:
 
-- `load_housing_units(path)` — Reads `housing_units.csv`, filters to county-level rows
-  (`FILTER == 1`), strips whitespace from county names, parses comma-formatted numbers,
-  and reshapes from wide format (one column per year) to long format (one row per
-  county-year).
+- `load_housing_units(path)` — Reads housing_units.csv, filters to county-level rows (FILTER == 1), strips whitespace from county names, parses comma-formatted numbers, and reshapes from wide format to long format (one row per county-year).
 - `load_population(path)` — Same process as above for `population.csv`.
-- `load_hpi(path)` — Loads and filters `hpi_master.csv` to WA county-level, purchase-only
-  rows. Returns an empty DataFrame on the real dataset (no matching rows); retained for
-  completeness.
+- `add_pop_growth(county_df)` — Helper function that computes year-over-year population growth percentage for a single county's rows. First year is NaN.
 - `merge_datasets(housing, population, hpi)` — Inner-joins the housing and population
-  DataFrames on `COUNTY` and `Year`, then inner-joins with HPI. On the real data, only
-  housing and population are used.
+  DataFrames on `COUNTY` and `Year`
 - `compute_derived_columns(merged)` — Adds `Units_Per_Capita` (housing units divided by
   population) and `Pop_Growth` (year-over-year percentage change in population, computed
   independently per county). The first year for each county is `NaN`.
@@ -94,13 +88,9 @@ produces all four visualizations:
 - `load_data()` — Reads `data/merged.csv` into a DataFrame.
 - `summary_statistics(df)` — Prints `describe()` output for the four quantitative columns,
   county value counts, and missing data counts.
-- `plot_hpi_trend(df)` — Line plot of population over time for all 39 counties. Saved as
-  `plot1_population_trend.png`.
-- `plot_population_vs_hpi(df)` — Scatter plot of population vs. housing units. Saved as
-  `plot2_pop_vs_units.png`.
-- `plot_recent_hpi_by_county(df)` — Bar chart of each county's most recent (2025)
-  population, sorted from highest to lowest. Saved as
-  `plot3_recent_population_by_county.png`.
+- `plot_population_trend(df)` — Line plot of population over time for all 39 counties. Saved as `plot1_population_trend.png`.
+- `plot_population_vs_units(df)` — Scatter plot of Population vs. Housing Units. Saved as `plot2_pop_vs_units.png`.
+- `plot_recent_population_by_county(df)` — Bar chart of each county's most recent (2025) population, sorted highest to lowest. Saved as `plot3_recent_population_by_county.png`.
 - `plot_units_vs_hpi_regression(df)` — Regression scatter plot of `Units_Per_Capita` vs.
   `Pop_Growth`. Saved as `plot4_units_vs_popgrowth_regression.png`.
 
@@ -109,10 +99,6 @@ Pytest test suite for `data_utils.py`. Uses small hand-crafted CSV fixtures (Alp
 Gamma counties) to verify each function against known expected values. Covers filtering,
 whitespace stripping, comma-number parsing, merge correctness, and per-county isolation of
 `Pop_Growth`.
-
-### `Test_utils.py`
-An earlier version of the test file. `test_utils.py` is the canonical, up-to-date test file and
-is the one that should be run.
 
 ### `test_eda.py`
 Additional tests for `eda.py` functions.
